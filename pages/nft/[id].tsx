@@ -1,24 +1,129 @@
-import React from 'react'
-import { useAddress, useDisconnect, useMetamask } from '@thirdweb-dev/react'
+import React, { useEffect, useState } from 'react'
+import {
+  useAddress,
+  useDisconnect,
+  useMetamask,
+  useNFTDrop,
+} from '@thirdweb-dev/react'
 import { GetServerSideProps } from 'next'
 import { sanityClient, urlFor } from '../../sanity'
 import { Collection } from '../../typings'
 import Link from 'next/link'
+import { BigNumber } from 'ethers'
+import { NotFoundError } from '@thirdweb-dev/sdk'
+import { NOTFOUND } from 'dns'
+import toast, { Toaster } from 'react-hot-toast'
 
 interface Props {
   collection: Collection
 }
 
 function NFTDropPage({ collection }: Props) {
+  const [claimedSupply, setClaimedSupply] = useState<number>(0)
+  const [unclaimedSupply, setUnclaimedSupply] = useState<number>(0)
+  const [totalSupply, setTotalSupply] = useState<number>(0)
+  // const [totalSupply, setTotalSupply] = useState<BigNumber>()
+  const [priceInEth, setPriceInEth] = useState<string>()
+  const nftDrop = useNFTDrop(collection.address)
+  const [loading, setLoading] = useState<Boolean>(true)
+
+  console.log('collection : ' + collection)
   // Auth
   const connectWithMetamask = useMetamask()
   const address = useAddress()
   const disconnect = useDisconnect()
   //
-  console.log(address)
+  useEffect(() => {
+    if (!nftDrop) return
+    const fetchPrice = async () => {
+      const claimConditions = await nftDrop.claimConditions.getAll()
+      setPriceInEth(claimConditions?.[0].currencyMetadata.displayValue)
+    }
+
+    fetchPrice()
+  }, [nftDrop])
+
+  useEffect(() => {
+    if (!nftDrop) return
+
+    const fetchNFTDropData = async () => {
+      setLoading(true)
+
+      const claimed = await nftDrop.getAllClaimed()
+      // const total = await nftDrop.totalSupply()
+      const unclaimed = await nftDrop.getAllUnclaimed()
+
+      console.log('claimed : ' + claimed)
+      console.log('unclaimed : ' + unclaimed)
+      // console.log('total : ' + total)
+      setClaimedSupply(claimed.length)
+      // setTotalSupply(total)
+      setUnclaimedSupply(unclaimed.length)
+      setTotalSupply(claimed.length + unclaimed.length)
+
+      // console.log(claimed, unclaimed, totalSupply)
+      setLoading(false)
+    }
+
+    fetchNFTDropData()
+  }, [nftDrop, claimedSupply])
+
+  const mintNft = () => {
+    if (!nftDrop || !address) return
+    const quantity = 1 // how many unique NFTs you want to claim
+    setLoading(true)
+    const notification = toast.loading('Minting...', {
+      style: {
+        background: 'white',
+        color: 'green',
+        fontWeight: 'bolder',
+        fontSize: '17px',
+        padding: '20px',
+      },
+    })
+
+    nftDrop
+      .claimTo(address, quantity)
+      .then(async (tx) => {
+        const receipt = tx[0].receipt // the transaction receipt
+        const claimedTokenId = tx[0].id // the id of the NFT claimed
+        const claimedNFT = await tx[0].data() // (optional) get the claimed NFT metadata
+
+        toast('HOORAY.. You successfully minted', {
+          duration: 8000,
+          style: {
+            background: 'green',
+            color: 'white',
+            fontWeight: 'bolder',
+            fontSize: '17px',
+            padding: '20px',
+          },
+        })
+        console.log('receipt' + receipt)
+        console.log('claimedTokenId' + claimedTokenId)
+        console.log('claimedNFT' + claimedNFT)
+      })
+      .catch((err) => {
+        console.log(err)
+        toast('Whoops.. Something went wrong!', {
+          style: {
+            background: 'red',
+            color: 'white',
+            fontWeight: 'bolder',
+            fontSize: '17px',
+            padding: '20px',
+          },
+        })
+      })
+      .finally(() => {
+        setLoading(false)
+        toast.dismiss(notification)
+      })
+  }
 
   return (
     <div className="flex h-screen flex-col lg:grid lg:grid-cols-10">
+      <Toaster position="bottom-center" />
       {/* Left */}
       <div className="bg-gradient-to-br from-cyan-800 to-rose-500 lg:col-span-4">
         <div className="flex flex-col items-center justify-center py-2 lg:min-h-screen">
@@ -79,11 +184,43 @@ function NFTDropPage({ collection }: Props) {
             {collection.title}
           </h1>
 
-          <p className="pt-2 text-xl text-green-500">13 / 21 NFT's claimed</p>
+          {loading ? (
+            <>
+              <p className="animate-bounce pt-2 text-xl text-green-500">
+                Loading Supply Count...
+              </p>
+              <img
+                className="h-80 w-80 object-contain"
+                src="https://cdn.hackernoon.com/images/0*4Gzjgh9Y7Gu8KEtZ.gif"
+                alt=""
+              />
+            </>
+          ) : (
+            <p className="pt-2 text-xl text-green-500">
+              {/* {claimedSupply} / {totalSupply?.toString()} NFT's claimed */}
+              {claimedSupply} / {totalSupply} NFT's claimed
+            </p>
+          )}
         </div>
         {/* Mint Button */}
-        <button className="mt-10 h-16 rounded-full bg-red-600 font-bold text-white">
-          Mint NFT (0.01 ETH)
+        <button
+          onClick={mintNft}
+          className="mt-10 h-16 rounded-full bg-red-600 font-bold text-white disabled:bg-gray-400"
+          disabled={
+            Boolean(loading) || !address || claimedSupply === totalSupply
+            // loading || claimedSupply === totalSupply?.toNumber() || !address
+          }
+        >
+          {loading ? (
+            <>Loading</>
+          ) : // claimedSupply === totalSupply?.toNumber()
+          claimedSupply === totalSupply ? (
+            <>SOLD OUT</>
+          ) : !address ? (
+            <>Sign In to Mint</>
+          ) : (
+            <span className="font-bold">Mint NFT ({priceInEth} ETH)</span>
+          )}
         </button>
       </div>
     </div>
@@ -113,7 +250,7 @@ export const getServerSideProps: GetServerSideProps = async ({ params }) => {
       name,
       address,
       slug {
-      current
+        current
       },
     },
   }`
@@ -121,6 +258,8 @@ export const getServerSideProps: GetServerSideProps = async ({ params }) => {
   const collection = await sanityClient.fetch(query, {
     id: params?.id,
   })
+
+  console.log('herer :' + collection)
 
   if (!collection) {
     return {
